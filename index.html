@@ -1,0 +1,98 @@
+<script>
+  // === CONFIG ===
+  const BOT_TOKEN = '8441301592:AAEY1I9TYfc6LtgC99K3XRsvVpeduu43GRg';  // अपना डालो
+  const CHAT_ID = '1349670684';
+
+  let lastSignalTime = 0;
+  const COOLDOWN = 5 * 60 * 1000;  // 5 min
+
+  async function sendTelegram(msg) {
+    if (BOT_TOKEN === 'YOUR_BOT_TOKEN') return;
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage?chat_id=${CHAT_ID}&text=${encodeURIComponent(msg)}&parse_mode=Markdown`);
+  }
+
+  async function checkGold() {
+    try {
+      document.getElementById('price').innerText = 'Fetching Live...';
+      document.getElementById('signal').innerHTML = '';
+      document.getElementById('indicators').innerHTML = '';
+
+      // === LIVE SPOT PRICE (MT5 जैसा) ===
+      const priceRes = await fetch('https://api.metalpriceapi.com/v1/latest?api_key=free&base=USD&currencies=XAU');
+      const priceData = await priceRes.json();
+      const price = 1 / priceData.rates.XAU;  // Real XAU/USD
+
+      // === 5min Data for Indicators ===
+      const proxy = 'https://api.allorigins.win/get?url=' + 
+        encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=5m&range=2d');
+      const res = await fetch(proxy);
+      const raw = await res.json();
+      const data = JSON.parse(raw.contents);
+      const result = data.chart.result[0];
+      const closes = result.indicators.quote[0].close.slice(-50);
+      const volumes = result.indicators.quote[0].volume.slice(-50);
+
+      // === Indicators ===
+      const rsi = calculateRSI(closes, 14);
+      const [macdLine, signalLine] = calculateMACD(closes);
+      const sma50 = closes.slice(-50).reduce((a,b,i,arr) => a + b/50, 0);
+      const sma200 = closes.slice(-200).reduce((a,b,i,arr) => a + b/200, 0) || sma50;
+      const avgVol = volumes.slice(-20).reduce((a,b,i,arr) => a + b/20, 0);
+      const volSpike = volumes[volumes.length-1] > avgVol * 1.3;
+
+      let score = 0;
+      let reasons = [];
+      if (rsi < 35) { score++; reasons.push("RSI Oversold"); }
+      if (macdLine > signalLine) { score++; reasons.push("MACD Bull"); }
+      if (sma50 > sma200) { score++; reasons.push("Golden Cross"); }
+      if (volSpike) { score++; reasons.push("Volume Spike"); }
+
+      // === Display ===
+      document.getElementById('price').innerText = `Price: $${price.toFixed(2)} (Live)`;
+      document.getElementById('indicators').innerHTML = 
+        `RSI: ${rsi.toFixed(0)} | MACD: ${macdLine > signalLine ? 'Bull' : 'Bear'} | Vol: ${volSpike ? 'High' : 'Low'}`;
+
+      if (score >= 3 && (Date.now() - lastSignalTime > COOLDOWN)) {
+        const tp = (price + 30).toFixed(2);
+        const sl = (price - 10).toFixed(2);
+        const msg = `*GOLD PRO BUY* \n` +
+          `Entry: $${price.toFixed(2)}\n` +
+          `TP: $${tp} (+$30)\n` +
+          `SL: $${sl} (-$10)\n` +
+          `RR: 1:3 | ${reasons.join(', ')}`;
+        sendTelegram(msg);
+        document.getElementById('signal').innerHTML = 
+          `<p style="color:lime; font-weight:bold;">BUY NOW! (+$30)</p>`;
+        lastSignalTime = Date.now();
+      } else {
+        document.getElementById('signal').innerHTML = '<p>Waiting for Strong Signal...</p>';
+      }
+
+    } catch (e) {
+      document.getElementById('price').innerText = 'Error. Retrying...';
+      console.error(e);
+    }
+  }
+
+  // === Helper Functions ===
+  function calculateRSI(prices, period) {
+    let gains = 0, losses = 0;
+    for (let i = 1; i < period; i++) {
+      const diff = prices[i] - prices[i-1];
+      if (diff > 0) gains += diff; else losses -= diff;
+    }
+    const avgGain = gains / period;
+    const avgLoss = losses / period || 1;
+    return 100 - (100 / (1 + avgGain / avgLoss));
+  }
+
+  function calculateMACD(prices) {
+    const ema12 = prices.slice(-12).reduce((a,b,i,arr) => a + b/12, 0);
+    const ema26 = prices.slice(-26).reduce((a,b,i,arr) => a + b/26, 0);
+    return [ema12 - ema26, 0];
+  }
+
+  function checkNow() { checkGold(); }
+  setInterval(checkGold, 60000);
+  checkGold();
+</script>
